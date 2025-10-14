@@ -75,15 +75,12 @@ def handle_incoming_p2p(conn, addr, incoming_q):
     finally:
         conn.close()
 
-# Configuración de la página
 st.set_page_config(
     page_title="Mensajería P2P",
-    page_icon="💬",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# CSS personalizado
 st.markdown("""
 <style>
     .main-header {
@@ -157,7 +154,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Inicialización del estado de la sesión
 if "server_sock" not in st.session_state:
     st.session_state.server_sock = None
 if "incoming_q" not in st.session_state:
@@ -217,16 +213,14 @@ def send_message_to_user(recipient, message_content):
         st.error("No estás conectado al servidor")
         return False
     
-    # Solicitar información P2P
     send_json(st.session_state.server_sock, {
         "type": "REQUEST_P2P", 
         "from": st.session_state.username, 
         "to": recipient
     })
     
-    time.sleep(0.3)  # Esperar respuesta
+    time.sleep(0.3)
     
-    # Intentar P2P directo
     p2p_info = getattr(st.session_state, "last_p2p_info", None)
     if p2p_info and p2p_info.get("ok"):
         peer = p2p_info["peer"]
@@ -245,10 +239,8 @@ def send_message_to_user(recipient, message_content):
             add_message_to_chat(recipient, message_content, True, "P2P")
             return True
         except Exception:
-            # Si P2P falla, usar relay
             pass
     
-    # Usar relay como respaldo
     try:
         send_json(st.session_state.server_sock, {
             "type": "RELAY",
@@ -264,21 +256,19 @@ def send_message_to_user(recipient, message_content):
 
 def show_login_page():
     """Muestra la página de login/registro"""
-    st.markdown('<h1 class="main-header">💬 Mensajería P2P</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header"> Mensajería P2P</h1>', unsafe_allow_html=True)
     
-    # Contenedor centrado para login
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
         st.markdown('<div class="login-container">', unsafe_allow_html=True)
         
-        # Pestañas para Login y Registro
-        tab1, tab2 = st.tabs(["🔑 Iniciar Sesión", "📝 Registrarse"])
+        tab1, tab2 = st.tabs([" Iniciar Sesión", " Registrarse"])
         
         with tab1:
             st.markdown("### Bienvenido de vuelta")
-            username = st.text_input("👤 Usuario", key="login_user", placeholder="Ingresa tu usuario")
-            password = st.text_input("🔒 Contraseña", type="password", key="login_pass", placeholder="Ingresa tu contraseña")
+            username = st.text_input(" Usuario", key="login_user", placeholder="Ingresa tu usuario")
+            password = st.text_input(" Contraseña", type="password", key="login_pass", placeholder="Ingresa tu contraseña")
             
             if st.button("🚀 Iniciar Sesión", type="primary", use_container_width=True):
                 if username and password:
@@ -289,7 +279,6 @@ def show_login_page():
                             st.session_state.username = username
                             st.session_state.show_login = False
                             
-                            # Iniciar listener y threads
                             def server_reader(sock, q):
                                 recv_lines(sock, out_q=q)
                             threading.Thread(target=server_reader, args=(s, st.session_state.incoming_q), daemon=True).start()
@@ -309,17 +298,17 @@ def show_login_page():
                             st.success("¡Conexión exitosa!")
                             st.rerun()
                         else:
-                            st.error("❌ Usuario o contraseña incorrectos")
+                            st.error(" Usuario o contraseña incorrectos")
                     except Exception as e:
-                        st.error(f"❌ Error de conexión: {str(e)}")
+                        st.error(f" Error de conexión: {str(e)}")
                 else:
-                    st.warning("⚠️ Por favor completa todos los campos")
+                    st.warning(" Por favor completa todos los campos")
         
         with tab2:
             st.markdown("### Crear nueva cuenta")
-            new_username = st.text_input("👤 Nuevo Usuario", key="reg_user", placeholder="Elige un nombre de usuario")
-            new_password = st.text_input("🔒 Nueva Contraseña", type="password", key="reg_pass", placeholder="Crea una contraseña segura")
-            confirm_password = st.text_input("🔒 Confirmar Contraseña", type="password", key="reg_confirm", placeholder="Confirma tu contraseña")
+            new_username = st.text_input(" Nuevo Usuario", key="reg_user", placeholder="Elige un nombre de usuario")
+            new_password = st.text_input(" Nueva Contraseña", type="password", key="reg_pass", placeholder="Crea una contraseña segura")
+            confirm_password = st.text_input("Confirmar Contraseña", type="password", key="reg_confirm", placeholder="Confirma tu contraseña")
             
             if st.button("✨ Crear Cuenta", type="primary", use_container_width=True):
                 if new_username and new_password and confirm_password:
@@ -327,25 +316,23 @@ def show_login_page():
                         try:
                             s, resp = connect_to_server(username=new_username, password=new_password, do_register=True)
                             if resp.get("ok"):
-                                st.success("✅ ¡Cuenta creada exitosamente! Ahora puedes iniciar sesión.")
+                                st.success("¡Cuenta creada exitosamente! Ahora puedes iniciar sesión.")
                             else:
-                                st.error("❌ Error al crear la cuenta. El usuario puede ya existir.")
+                                st.error(" Error al crear la cuenta. El usuario puede ya existir.")
                             s.close()
                         except Exception as e:
-                            st.error(f"❌ Error de registro: {str(e)}")
+                            st.error(f" Error de registro: {str(e)}")
                     else:
-                        st.error("❌ Las contraseñas no coinciden")
+                        st.error(" Las contraseñas no coinciden")
                 else:
-                    st.warning("⚠️ Por favor completa todos los campos")
+                    st.warning("Por favor completa todos los campos")
         
         st.markdown('</div>', unsafe_allow_html=True)
 
 def show_chat_page():
     """Muestra la página principal de chat"""
-    # Procesar mensajes entrantes
     process_incoming_messages()
     
-    # Header con información del usuario
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
         st.markdown(f'<h2 class="main-header">💬 Chats - {st.session_state.username}</h2>', unsafe_allow_html=True)
@@ -358,28 +345,22 @@ def show_chat_page():
                 st.session_state.server_sock.close()
             except:
                 pass
-            # Limpiar estado
             st.session_state.server_sock = None
             st.session_state.username = None
             st.session_state.show_login = True
             st.session_state.current_chat = None
             st.rerun()
     
-    # Layout principal
     col1, col2 = st.columns([1, 2])
     
-    # Panel izquierdo - Lista de usuarios y chats
     with col1:
-        st.markdown("### 👥 Usuarios conectados")
+        st.markdown("### Usuarios conectados")
         
-        # Obtener lista actualizada
         if st.session_state.server_sock:
             send_json(st.session_state.server_sock, {"type": "GET_USERS"})
         
-        # Mostrar usuarios
         for user in st.session_state.users:
             if user != st.session_state.username:
-                # Verificar si hay mensajes no leídos (simplificado)
                 has_messages = user in st.session_state.chat_history
                 
                 col_user, col_btn = st.columns([3, 1])
@@ -397,10 +378,9 @@ def show_chat_page():
         if not st.session_state.users:
             st.info("No hay usuarios conectados")
         
-        # Historial de chats
         st.markdown("### 📝 Chats recientes")
         for chat_user in st.session_state.chat_history:
-            if chat_user not in st.session_state.users:  # Usuarios no conectados
+            if chat_user not in st.session_state.users:  
                 col_user, col_btn = st.columns([3, 1])
                 with col_user:
                     st.markdown(f"⚪ {chat_user} (offline)")
@@ -409,18 +389,16 @@ def show_chat_page():
                         st.session_state.current_chat = chat_user
                         st.rerun()
     
-    # Panel derecho - Chat activo
     with col2:
         if st.session_state.current_chat:
-            st.markdown(f"### 💬 Chat con {st.session_state.current_chat}")
+            st.markdown(f"### Chat con {st.session_state.current_chat}")
             
-            # Área de mensajes
             chat_container = st.container()
             with chat_container:
                 if st.session_state.current_chat in st.session_state.chat_history:
                     messages = st.session_state.chat_history[st.session_state.current_chat]
                     
-                    for msg in messages[-20:]:  # Mostrar últimos 20 mensajes
+                    for msg in messages[-20:]: 
                         if msg["is_sent"]:
                             st.markdown(f"""
                             <div class="message-sent">
@@ -438,7 +416,7 @@ def show_chat_page():
                 else:
                     st.info("No hay mensajes en este chat. ¡Envía el primero!")
             
-            # Input para nuevo mensaje
+            
             st.markdown("---")
             with st.form("message_form", clear_on_submit=True):
                 new_message = st.text_area("Escribe tu mensaje...", height=100, key="new_msg")
@@ -448,10 +426,9 @@ def show_chat_page():
                     if send_message_to_user(st.session_state.current_chat, new_message.strip()):
                         st.rerun()
         else:
-            st.markdown("### 💭 Selecciona un usuario para comenzar a chatear")
+            st.markdown("### Selecciona un usuario para comenzar a chatear")
             st.info("Elige un usuario de la lista de la izquierda para iniciar una conversación")
 
-# Página principal
 if st.session_state.username and not st.session_state.show_login:
     show_chat_page()
 else:
