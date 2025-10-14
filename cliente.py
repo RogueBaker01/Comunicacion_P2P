@@ -174,7 +174,6 @@ if "show_login" not in st.session_state:
     st.session_state.show_login = True
 
 def process_incoming_messages():
-    """Procesa mensajes entrantes y los organiza por chat"""
     while not st.session_state.incoming_q.empty():
         item = st.session_state.incoming_q.get_nowait()
         if isinstance(item, tuple) and item[0] == "p2p":
@@ -270,7 +269,7 @@ def show_login_page():
             username = st.text_input(" Usuario", key="login_user", placeholder="Ingresa tu usuario")
             password = st.text_input(" Contraseña", type="password", key="login_pass", placeholder="Ingresa tu contraseña")
             
-            if st.button("🚀 Iniciar Sesión", type="primary", use_container_width=True):
+            if st.button("Iniciar Sesión", type="primary", use_container_width=True):
                 if username and password:
                     try:
                         s, resp = connect_to_server(username=username, password=password, do_register=False)
@@ -335,7 +334,7 @@ def show_chat_page():
     
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        st.markdown(f'<h2 class="main-header">💬 Chats - {st.session_state.username}</h2>', unsafe_allow_html=True)
+        st.markdown(f'<h2 class="main-header"> Chats - {st.session_state.username}</h2>', unsafe_allow_html=True)
     with col2:
         if st.button("🔄 Actualizar usuarios", type="secondary"):
             send_json(st.session_state.server_sock, {"type": "GET_USERS"})
@@ -366,26 +365,26 @@ def show_chat_page():
                 col_user, col_btn = st.columns([3, 1])
                 with col_user:
                     if has_messages:
-                        st.markdown(f"**💬 {user}**")
+                        st.markdown(f"** {user}**")
                     else:
-                        st.markdown(f"👤 {user}")
+                        st.markdown(f" {user}")
                 
                 with col_btn:
-                    if st.button("💬", key=f"chat_{user}", help=f"Chatear con {user}"):
+                    if st.button("", key=f"chat_{user}", help=f"Chatear con {user}"):
                         st.session_state.current_chat = user
                         st.rerun()
         
         if not st.session_state.users:
             st.info("No hay usuarios conectados")
         
-        st.markdown("### 📝 Chats recientes")
+        st.markdown("###  Chats recientes")
         for chat_user in st.session_state.chat_history:
             if chat_user not in st.session_state.users:  
                 col_user, col_btn = st.columns([3, 1])
                 with col_user:
-                    st.markdown(f"⚪ {chat_user} (offline)")
+                    st.markdown(f" {chat_user} (offline)")
                 with col_btn:
-                    if st.button("📖", key=f"history_{chat_user}", help=f"Ver historial con {chat_user}"):
+                    if st.button(, key=f"history_{chat_user}", help=f"Ver historial con {chat_user}"):
                         st.session_state.current_chat = chat_user
                         st.rerun()
     
