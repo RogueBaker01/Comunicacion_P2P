@@ -57,10 +57,7 @@ def broadcast_user_list():
             send_json(info["sock"], {"type": "user_list", "users": users_list})
 
 def handle_client(conn, addr):
-    """
-    Cada cliente envía JSON newline-terminated.
-    Mensajes soportados: REGISTER, LOGIN, UPDATE_PRESENCE, GET_USERS, REQUEST_P2P, RELAY
-    """
+    
     buf = b""
     username = None
     try:

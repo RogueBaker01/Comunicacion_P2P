@@ -1,434 +1,372 @@
-import streamlit as st
-import socket, threading, json, time, queue
-from datetime import datetime
+import socket
+import threading
+import json
+import queue
+import datetime
+import time
+import sys
 
-SERVER_HOST = "192.168.1.73"  
+SERVER_HOST = '192.168.1.73'
 SERVER_PORT = 8080
 
-def send_json(sock, data):
-    sock.sendall((json.dumps(data) + "\n").encode())
-
-def recv_lines(sock, out_q=None):
-    buf = b""
-    try:
-        while True:
-            d = sock.recv(4096)
-            if not d:
-                break
-            buf += d
-            while b"\n" in buf:
-                line, buf = buf.split(b"\n", 1)
-                try:
-                    obj = json.loads(line.decode())
-                except:
-                    continue
-                if out_q:
-                    out_q.put(obj)
-    except Exception as e:
-        print("recv error", e)
-
-def connect_to_server(username=None, password=None, do_register=False):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((SERVER_HOST, SERVER_PORT))
-    if do_register:
-        send_json(sock, {"type":"REGISTER", "username": username, "password": password})
-        resp = json.loads(sock.recv(4096).decode().split("\n")[0])
-        return sock, resp
-    else:
-        send_json(sock, {"type":"LOGIN", "username": username, "password": password})
-        buf = b""
-        while b"\n" not in buf:
-            buf += sock.recv(4096)
-        line, rest = buf.split(b"\n", 1)
-        resp = json.loads(line.decode())
-        return sock, resp
-
-def start_listener(listen_port, incoming_q):
-    lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    lsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    lsock.bind(("0.0.0.0", listen_port))
-    lsock.listen(5)
-    def accept_loop():
-        while True:
-            conn, addr = lsock.accept()
-            threading.Thread(target=handle_incoming_p2p, args=(conn, addr, incoming_q), daemon=True).start()
-    t = threading.Thread(target=accept_loop, daemon=True)
-    t.start()
-    return lsock
-
-def handle_incoming_p2p(conn, addr, incoming_q):
-    buf = b""
-    try:
-        while True:
-            d = conn.recv(4096)
-            if not d: break
-            buf += d
-            while b"\n" in buf:
-                line, buf = buf.split(b"\n",1)
-                try:
-                    msg = json.loads(line.decode())
-                    incoming_q.put(("p2p", msg))
-                except:
-                    pass
-    except Exception as e:
-        print("p2p recv err", e)
-    finally:
-        conn.close()
-
-st.set_page_config(
-    page_title="Mensajería P2P",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
-
-st.markdown("""
-<style>
-    .main-header {
-        text-align: center;
-        color: #2E86AB;
-        margin-bottom: 2rem;
-        padding: 1rem;
-        border-bottom: 2px solid #A23B72;
-    }
-    
-    .login-container {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 2rem;
-        border-radius: 15px;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-        margin: 2rem auto;
-        max-width: 400px;
-    }
-    
-    .chat-container {
-        background-color: #f8f9fa;
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 0.5rem 0;
-        border-left: 4px solid #007bff;
-    }
-    
-    .message-sent {
-        background-color: #007bff;
-        color: white;
-        padding: 0.8rem;
-        border-radius: 15px 15px 5px 15px;
-        margin: 0.3rem 0;
-        margin-left: 20%;
-        text-align: right;
-    }
-    
-    .message-received {
-        background-color: #e9ecef;
-        color: #333;
-        padding: 0.8rem;
-        border-radius: 15px 15px 15px 5px;
-        margin: 0.3rem 0;
-        margin-right: 20%;
-    }
-    
-    .user-list-item {
-        background-color: white;
-        padding: 0.8rem;
-        margin: 0.3rem 0;
-        border-radius: 8px;
-        border: 1px solid #dee2e6;
-        cursor: pointer;
-        transition: all 0.3s ease;
-    }
-    
-    .user-list-item:hover {
-        background-color: #e3f2fd;
-        border-color: #2196f3;
-    }
-    
-    .status-connected {
-        color: #28a745;
-        font-weight: bold;
-    }
-    
-    .status-disconnected {
-        color: #dc3545;
-        font-weight: bold;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-if "server_sock" not in st.session_state:
-    st.session_state.server_sock = None
-if "incoming_q" not in st.session_state:
-    st.session_state.incoming_q = queue.Queue()
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "username" not in st.session_state:
-    st.session_state.username = None
-if "listener_port" not in st.session_state:
-    st.session_state.listener_port = None
-if "current_chat" not in st.session_state:
-    st.session_state.current_chat = None
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = {}
-if "users" not in st.session_state:
-    st.session_state.users = []
-if "show_login" not in st.session_state:
-    st.session_state.show_login = True
-
-def process_incoming_messages():
-    while not st.session_state.incoming_q.empty():
-        item = st.session_state.incoming_q.get_nowait()
-        if isinstance(item, tuple) and item[0] == "p2p":
-            msg = item[1]
-            sender = msg.get("from", "unknown")
-            add_message_to_chat(sender, msg.get("content", ""), False, "P2P")
-        else:
-            msg = item
-            t = msg.get("type")
-            if t == "USER_LIST":
-                st.session_state.users = msg.get("users", [])
-            elif t == "P2P_INFO":
-                st.session_state.last_p2p_info = msg
-            elif t == "RELAY_IN":
-                sender = msg.get("from", "unknown")
-                add_message_to_chat(sender, msg.get("content", ""), False, "Relay")
-            else:
-                st.session_state.messages.append(("server", msg))
-
-def add_message_to_chat(user, content, is_sent=False, method=""):
-    """Añade un mensaje al historial de chat"""
-    if user not in st.session_state.chat_history:
-        st.session_state.chat_history[user] = []
-    
-    message = {
-        "content": content,
-        "timestamp": datetime.now().strftime("%H:%M"),
-        "is_sent": is_sent,
-        "method": method
-    }
-    st.session_state.chat_history[user].append(message)
-
-def send_message_to_user(recipient, message_content):
-    """Envía un mensaje a un usuario específico"""
-    if not st.session_state.server_sock:
-        st.error("No estás conectado al servidor")
-        return False
-    
-    send_json(st.session_state.server_sock, {
-        "type": "REQUEST_P2P", 
-        "from": st.session_state.username, 
-        "to": recipient
-    })
-    
-    time.sleep(0.3)
-    
-    p2p_info = getattr(st.session_state, "last_p2p_info", None)
-    if p2p_info and p2p_info.get("ok"):
-        peer = p2p_info["peer"]
+class P2PClient:
+    def __init__(self):
+        self.server_sock = None
+        self.p2p_sock = None
+        self.p2p_port = None
+        self.username = None
+        self.connected_users = []
+        self.message_queue = queue.Queue()
+        self.running = True
+        self.p2p_connections = {}
+        
+    def send_json(self, sock, data):
         try:
-            psock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            psock.settimeout(2.0)
-            psock.connect((peer["ip"], peer["port"]))
-            send_json(psock, {
-                "type": "CHAT",
-                "from": st.session_state.username,
-                "to": recipient,
-                "content": message_content,
-                "ts": time.time()
-            })
-            psock.close()
-            add_message_to_chat(recipient, message_content, True, "P2P")
+            sock.sendall((json.dumps(data) + "\n").encode())
             return True
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error enviando datos: {e}")
+            return False
     
-    try:
-        send_json(st.session_state.server_sock, {
-            "type": "RELAY",
-            "from": st.session_state.username,
-            "to": recipient,
-            "content": message_content
-        })
-        add_message_to_chat(recipient, message_content, True, "Relay")
-        return True
-    except Exception as e:
-        st.error(f"Error enviando mensaje: {e}")
+    def connect_to_server(self):
+        try:
+            self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_sock.connect((SERVER_HOST, SERVER_PORT))
+            print(f"Conectado al servidor {SERVER_HOST}:{SERVER_PORT}")
+            return True
+        except Exception as e:
+            print(f"Error conectando al servidor: {e}")
+            return False
+    
+    def register(self, username, password):
+        if not self.server_sock:
+            return False, "No conectado al servidor"
+        
+        msg = {"type": "REGISTER", "username": username, "password": password}
+        if not self.send_json(self.server_sock, msg):
+            return False, "Error enviando datos"
+        
+        response = self.receive_json(self.server_sock)
+        if response and response.get("type") == "REGISTER_RES":
+            return response.get("ok", False), response.get("reason", "Error desconocido")
+        return False, "No se recibió respuesta"
+    
+    def login(self, username, password):
+        if not self.server_sock:
+            return False
+        
+        msg = {"type": "LOGIN", "username": username, "password": password}
+        if not self.send_json(self.server_sock, msg):
+            return False
+        
+        response = self.receive_json(self.server_sock)
+        if response and response.get("type") == "LOGIN_RES":
+            if response.get("ok", False):
+                self.username = username
+                return True
         return False
-
-def show_login_page():
-    """Muestra la página de login/registro"""
-    st.markdown('<h1 class="main-header"> Mensajería P2P</h1>', unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns([1, 2, 1])
+    def receive_json(self, sock):
+        try:
+            buffer = b""
+            while True:
+                data = sock.recv(1024)
+                if not data:
+                    return None
+                buffer += data
+                if b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    return json.loads(line.decode())
+        except Exception as e:
+            print(f"Error recibiendo datos: {e}")
+            return None
     
-    with col2:
-        st.markdown('<div class="login-container">', unsafe_allow_html=True)
-        
-        tab1, tab2 = st.tabs([" Iniciar Sesión", " Registrarse"])
-        
-        with tab1:
-            st.markdown("### Bienvenido de vuelta")
-            username = st.text_input(" Usuario", key="login_user", placeholder="Ingresa tu usuario")
-            password = st.text_input(" Contraseña", type="password", key="login_pass", placeholder="Ingresa tu contraseña")
+    def setup_p2p_listener(self):
+        try:
+            self.p2p_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.p2p_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.p2p_sock.bind(('0.0.0.0', 0)) 
+            self.p2p_port = self.p2p_sock.getsockname()[1]
+            self.p2p_sock.listen(10)
             
-            if st.button("Iniciar Sesión", type="primary", use_container_width=True):
-                if username and password:
-                    try:
-                        s, resp = connect_to_server(username=username, password=password, do_register=False)
-                        if resp.get("ok"):
-                            st.session_state.server_sock = s
-                            st.session_state.username = username
-                            st.session_state.show_login = False
-                            
-                            def server_reader(sock, q):
-                                recv_lines(sock, out_q=q)
-                            threading.Thread(target=server_reader, args=(s, st.session_state.incoming_q), daemon=True).start()
-
-                            lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                            lsock.bind(("0.0.0.0", 0)) 
-                            port = lsock.getsockname()[1]
-                            lsock.close()
-                            st.session_state.listener_port = port
-                            start_listener(port, st.session_state.incoming_q)
-                            send_json(st.session_state.server_sock, {
-                                "type": "UPDATE_PRESENCE", 
-                                "username": st.session_state.username, 
-                                "listen_port": port
-                            })
-                            
-                            st.success("¡Conexión exitosa!")
-                            st.rerun()
-                        else:
-                            st.error(" Usuario o contraseña incorrectos")
-                    except Exception as e:
-                        st.error(f" Error de conexión: {str(e)}")
-                else:
-                    st.warning(" Por favor completa todos los campos")
-        
-        with tab2:
-            st.markdown("### Crear nueva cuenta")
-            new_username = st.text_input(" Nuevo Usuario", key="reg_user", placeholder="Elige un nombre de usuario")
-            new_password = st.text_input(" Nueva Contraseña", type="password", key="reg_pass", placeholder="Crea una contraseña segura")
-            confirm_password = st.text_input("Confirmar Contraseña", type="password", key="reg_confirm", placeholder="Confirma tu contraseña")
+            threading.Thread(target=self.accept_p2p_connections, daemon=True).start()
             
-            if st.button("✨ Crear Cuenta", type="primary", use_container_width=True):
-                if new_username and new_password and confirm_password:
-                    if new_password == confirm_password:
-                        try:
-                            s, resp = connect_to_server(username=new_username, password=new_password, do_register=True)
-                            if resp.get("ok"):
-                                st.success("¡Cuenta creada exitosamente! Ahora puedes iniciar sesión.")
-                            else:
-                                st.error(" Error al crear la cuenta. El usuario puede ya existir.")
-                            s.close()
-                        except Exception as e:
-                            st.error(f" Error de registro: {str(e)}")
-                    else:
-                        st.error(" Las contraseñas no coinciden")
-                else:
-                    st.warning("Por favor completa todos los campos")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-
-def show_chat_page():
-    """Muestra la página principal de chat"""
-    process_incoming_messages()
+            self.update_presence()
+            
+            print(f"Escuchando conexiones P2P en puerto {self.p2p_port}")
+            return True
+        except Exception as e:
+            print(f"Error configurando P2P: {e}")
+            return False
     
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        st.markdown(f'<h2 class="main-header"> Chats - {st.session_state.username}</h2>', unsafe_allow_html=True)
-    with col2:
-        if st.button("🔄 Actualizar usuarios", type="secondary"):
-            send_json(st.session_state.server_sock, {"type": "GET_USERS"})
-    with col3:
-        if st.button("🚪 Cerrar Sesión", type="secondary"):
+    def update_presence(self):
+        if not self.server_sock or not self.username:
+            return
+        
+        msg = {
+            "type": "UPDATE_PRESENCE",
+            "username": self.username,
+            "listen_port": self.p2p_port
+        }
+        self.send_json(self.server_sock, msg)
+    
+    def accept_p2p_connections(self):
+        while self.running:
             try:
-                st.session_state.server_sock.close()
-            except:
-                pass
-            st.session_state.server_sock = None
-            st.session_state.username = None
-            st.session_state.show_login = True
-            st.session_state.current_chat = None
-            st.rerun()
+                conn, addr = self.p2p_sock.accept()
+                threading.Thread(target=self.handle_p2p_connection, args=(conn, addr), daemon=True).start()
+            except Exception as e:
+                if self.running:
+                    print(f"Error aceptando conexión P2P: {e}")
     
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        st.markdown("### Usuarios conectados")
-        
-        if st.session_state.server_sock:
-            send_json(st.session_state.server_sock, {"type": "GET_USERS"})
-        
-        for user in st.session_state.users:
-            if user != st.session_state.username:
-                has_messages = user in st.session_state.chat_history
+    def handle_p2p_connection(self, conn, addr):
+        print(f"Nueva conexión P2P desde {addr}")
+        buffer = b""
+        try:
+            while self.running:
+                data = conn.recv(1024)
+                if not data:
+                    break
                 
-                col_user, col_btn = st.columns([3, 1])
-                with col_user:
-                    if has_messages:
-                        st.markdown(f"** {user}**")
-                    else:
-                        st.markdown(f" {user}")
-                
-                with col_btn:
-                    if st.button("", key=f"chat_{user}", help=f"Chatear con {user}"):
-                        st.session_state.current_chat = user
-                        st.rerun()
-        
-        if not st.session_state.users:
-            st.info("No hay usuarios conectados")
-        
-        st.markdown("###  Chats recientes")
-        for chat_user in st.session_state.chat_history:
-            if chat_user not in st.session_state.users:  
-                col_user, col_btn = st.columns([3, 1])
-                with col_user:
-                    st.markdown(f" {chat_user} (offline)")
-                with col_btn:
-                    if st.button(, key=f"history_{chat_user}", help=f"Ver historial con {chat_user}"):
-                        st.session_state.current_chat = chat_user
-                        st.rerun()
+                buffer += data
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    try:
+                        msg = json.loads(line.decode())
+                        if msg.get("type") == "P2P_MESSAGE":
+                            sender = msg.get("from", "Desconocido")
+                            content = msg.get("content", "")
+                            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+                            print(f"\n[{timestamp}] {sender} (P2P): {content}")
+                            print("> ", end="", flush=True)
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            print(f"Error en conexión P2P: {e}")
+        finally:
+            conn.close()
     
-    with col2:
-        if st.session_state.current_chat:
-            st.markdown(f"### Chat con {st.session_state.current_chat}")
+    def connect_to_peer(self, peer_ip, peer_port):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((peer_ip, peer_port))
+            return sock
+        except Exception as e:
+            print(f"Error conectando al peer {peer_ip}:{peer_port}: {e}")
+            return None
+    
+    def send_p2p_message(self, target_user, message):
+        msg = {"type": "REQUEST_P2P", "to": target_user, "from": self.username}
+        if not self.send_json(self.server_sock, msg):
+            return False
+        
+        response = self.receive_json(self.server_sock)
+        if not response or response.get("type") != "P2P_INFO":
+            return False
+        
+        if not response.get("ok", False):
+            print(f"No se puede conectar con {target_user}: {response.get('reason', 'Error desconocido')}")
+            return False
+        
+        peer_info = response.get("peer", {})
+        peer_ip = peer_info.get("ip")
+        peer_port = peer_info.get("port")
+        
+        if not peer_ip or not peer_port:
+            print(f"Información del peer incompleta para {target_user}")
+            return False
+        
+        peer_sock = self.connect_to_peer(peer_ip, peer_port)
+        if not peer_sock:
+            return False
+        
+        try:
+            p2p_msg = {
+                "type": "P2P_MESSAGE",
+                "from": self.username,
+                "content": message
+            }
+            self.send_json(peer_sock, p2p_msg)
+            peer_sock.close()
+            return True
+        except Exception as e:
+            print(f"Error enviando mensaje P2P: {e}")
+            return False
+    
+    def send_relay_message(self, target_user, message):
+        msg = {
+            "type": "RELAY",
+            "to": target_user,
+            "from": self.username,
+            "content": message
+        }
+        return self.send_json(self.server_sock, msg)
+    
+    def get_users(self):
+        msg = {"type": "GET_USERS"}
+        if not self.send_json(self.server_sock, msg):
+            return []
+        
+        response = self.receive_json(self.server_sock)
+        if response and response.get("type") == "USER_LIST":
+            return response.get("users", [])
+        return []
+    
+    def listen_server_messages(self):
+        buffer = b""
+        try:
+            while self.running:
+                data = self.server_sock.recv(1024)
+                if not data:
+                    break
+                
+                buffer += data
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    try:
+                        msg = json.loads(line.decode())
+                        self.handle_server_message(msg)
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            if self.running:
+                print(f"Error escuchando servidor: {e}")
+    
+    def handle_server_message(self, msg):
+        msg_type = msg.get("type")
+        
+        if msg_type == "USER_LIST":
+            self.connected_users = msg.get("users", [])
             
-            chat_container = st.container()
-            with chat_container:
-                if st.session_state.current_chat in st.session_state.chat_history:
-                    messages = st.session_state.chat_history[st.session_state.current_chat]
-                    
-                    for msg in messages[-20:]: 
-                        if msg["is_sent"]:
-                            st.markdown(f"""
-                            <div class="message-sent">
-                                <strong>Tú ({msg['method']})</strong> - {msg['timestamp']}<br>
-                                {msg['content']}
-                            </div>
-                            """, unsafe_allow_html=True)
-                        else:
-                            st.markdown(f"""
-                            <div class="message-received">
-                                <strong>{st.session_state.current_chat} ({msg['method']})</strong> - {msg['timestamp']}<br>
-                                {msg['content']}
-                            </div>
-                            """, unsafe_allow_html=True)
+        elif msg_type == "RELAY_IN":
+            sender = msg.get("from", "Desconocido")
+            content = msg.get("content", "")
+            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+            print(f"\n[{timestamp}] {sender} (relay): {content}")
+            print("> ", end="", flush=True)
+            
+        elif msg_type == "RELAY_ACK":
+            if not msg.get("ok", False):
+                print(f"Error enviando mensaje: {msg.get('reason', 'Error desconocido')}")
+    
+    def show_menu(self):
+        print("\n=== CLIENTE P2P ===")
+        print("1. Listar usuarios conectados")
+        print("2. Enviar mensaje P2P")
+        print("3. Enviar mensaje via servidor (relay)")
+        print("4. Salir")
+        print("===================")
+    
+    def run(self):
+        """Ejecuta el cliente"""
+        print("=== CLIENTE P2P ===")
+        
+        if not self.connect_to_server():
+            return
+        
+        while True:
+            print("\n1. Registrarse")
+            print("2. Iniciar sesión")
+            print("3. Salir")
+            choice = input("Seleccione una opción: ").strip()
+            
+            if choice == "1":
+                username = input("Nombre de usuario: ").strip()
+                password = input("Contraseña: ").strip()
+                
+                ok, reason = self.register(username, password)
+                if ok:
+                    print(f"Registro exitoso: {reason}")
                 else:
-                    st.info("No hay mensajes en este chat. ¡Envía el primero!")
-            
-            
-            st.markdown("---")
-            with st.form("message_form", clear_on_submit=True):
-                new_message = st.text_area("Escribe tu mensaje...", height=100, key="new_msg")
-                submitted = st.form_submit_button("📤 Enviar", type="primary", use_container_width=True)
+                    print(f"Error en registro: {reason}")
+                    
+            elif choice == "2":
+                username = input("Nombre de usuario: ").strip()
+                password = input("Contraseña: ").strip()
                 
-                if submitted and new_message.strip():
-                    if send_message_to_user(st.session_state.current_chat, new_message.strip()):
-                        st.rerun()
-        else:
-            st.markdown("### Selecciona un usuario para comenzar a chatear")
-            st.info("Elige un usuario de la lista de la izquierda para iniciar una conversación")
+                if self.login(username, password):
+                    print(f"Sesión iniciada como {username}")
+                    break
+                else:
+                    print("Error en inicio de sesión")
+                    
+            elif choice == "3":
+                return
+            else:
+                print("Opción inválida")
+        
+        if not self.setup_p2p_listener():
+            print("Error configurando P2P, continuando sin P2P...")
+        
+        threading.Thread(target=self.listen_server_messages, daemon=True).start()
+        
+        print(f"\n¡Bienvenido {self.username}!")
+        print("Escriba 'help' para ver los comandos disponibles")
+        
+        while self.running:
+            try:
+                user_input = input("> ").strip()
+                
+                if not user_input:
+                    continue
+                    
+                if user_input.lower() == "help":
+                    print("Comandos disponibles:")
+                    print("  users - Listar usuarios conectados")
+                    print("  p2p <usuario> <mensaje> - Enviar mensaje P2P")
+                    print("  relay <usuario> <mensaje> - Enviar mensaje via servidor")
+                    print("  quit - Salir")
+                    
+                elif user_input.lower() == "users":
+                    users = self.get_users()
+                    print(f"Usuarios conectados: {users}")
+                    
+                elif user_input.lower().startswith("p2p "):
+                    parts = user_input.split(" ", 2)
+                    if len(parts) >= 3:
+                        target = parts[1]
+                        message = parts[2]
+                        if self.send_p2p_message(target, message):
+                            print(f"Mensaje P2P enviado a {target}")
+                        else:
+                            print(f"Error enviando mensaje P2P a {target}")
+                    else:
+                        print("Uso: p2p <usuario> <mensaje>")
+                        
+                elif user_input.lower().startswith("relay "):
+                    parts = user_input.split(" ", 2)
+                    if len(parts) >= 3:
+                        target = parts[1]
+                        message = parts[2]
+                        if self.send_relay_message(target, message):
+                            print(f"Mensaje relay enviado a {target}")
+                        else:
+                            print(f"Error enviando mensaje relay a {target}")
+                    else:
+                        print("Uso: relay <usuario> <mensaje>")
+                        
+                elif user_input.lower() in ["quit", "exit", "salir"]:
+                    break
+                    
+                else:
+                    print("Comando no reconocido. Escriba 'help' para ayuda.")
+                    
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                print(f"Error: {e}")
+        
+        
+        self.running = False
+        if self.server_sock:
+            self.server_sock.close()
+        if self.p2p_sock:
+            self.p2p_sock.close()
+        print("Cliente desconectado")
 
-if st.session_state.username and not st.session_state.show_login:
-    show_chat_page()
-else:
-    show_login_page()
+def main():
+    client = P2PClient()
+    client.run()
+
+if __name__ == "__main__":
+    main()
